@@ -327,26 +327,40 @@ function loadTax(apt, year, quarter){
 
   try{ console.info("[ov] Request URL:", url); }catch(_){}
 
-  const controller = new AbortController();
-  const timeoutMs = 15000;
-  const tmr = setTimeout(()=> controller.abort(), timeoutMs);
+    // Use fetch with a single retry. The Apps Script endpoint returns Access-Control-Allow-Origin: *
+    // so a CORS fetch is the preferred, reliable path. JSONP fallback removed to avoid script tag issues.
+    const doFetch = (attempt=1) => {
+      const controller = new AbortController();
+      const timeoutMs = 15000;
+      const tmr = setTimeout(()=> controller.abort(), timeoutMs);
+      return fetch(url, { signal: controller.signal, cache: 'no-store' })
+        .then(async resp => {
+          clearTimeout(tmr);
+          if(!resp.ok){
+            const text = await resp.text().catch(()=>"");
+            const err = new Error(`HTTP ${resp.status}`);
+            err.status = resp.status; err.body = text; throw err;
+          }
+          const ct = resp.headers.get('content-type') || '';
+          if(ct.includes('application/json')) return resp.json();
+          const txt = await resp.text();
+          // try extract JSON object from JSONP-like response
+          const m = txt.match(/\{[\s\S]*\}/);
+          if(m) return JSON.parse(m[0]);
+          throw new Error('Unexpected response format');
+        })
+        .catch(async err => {
+          // retry once for transient network/CORS issues
+          if(attempt===1){
+            console.warn('[ov] fetch failed, retrying once:', err);
+            await new Promise(r=>setTimeout(r,800));
+            return doFetch(2);
+          }
+          throw err;
+        });
+    };
 
-  fetch(url, { signal: controller.signal, cache: 'no-store' })
-    .then(async resp => {
-      clearTimeout(tmr);
-      if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const ct = resp.headers.get('content-type') || '';
-      if(ct.includes('application/json')){
-        return resp.json();
-      }
-      const txt = await resp.text();
-      try{
-        const m = txt.match(/\{[\s\S]*\}/);
-        if(m) return JSON.parse(m[0]);
-      }catch(_){}
-      throw new Error('Unexpected response format');
-    })
-    .then(res=>{
+    doFetch().then(res=>{
       if(!res || !res.ok){
         const msg=res && res.error ? res.error : "Impossibile calcolare.";
         let hint="";
@@ -358,45 +372,18 @@ function loadTax(apt, year, quarter){
         return;
       }
       renderResult(res, quarter);
-    })
-    .catch(err=>{
-      clearTimeout(tmr);
-      try{ console.info('[ov] falling back to JSONP for', url); }catch(_){ }
-      return jsonp(url)
-        .then(res=>{
-          if(!res || !res.ok){
-            const msg=res && res.error ? res.error : "Impossibile calcolare."; 
-            let hint="";
-            if(/Cartella trimestre non trovata/i.test(msg)) hint=`Controlla in Drive: Appartamenti ➜ ${apt} ➜ ${year} ➜ ${quarter} (cartella mancante).`;
-            else if(/Nessun file nel trimestre/i.test(msg)) hint="La cartella esiste ma non contiene alcun file report.";
-            else if(/Cartella appartamento non trovata/i.test(msg)) hint="Il nome dell'appartamento deve corrispondere alla cartella in Drive.";
-            else if(/Parametri richiesti/i.test(msg)) hint="Verifica apt, year e quarter (Q1..Q4).";
-            showErrorModal(msg, hint);
-            return;
-          }
-          renderResult(res, quarter);
-        })
-        .catch(jerr=>{
-          const isTimeout = /timeout/i.test(String(jerr));
-          const msg = isTimeout ? "Timeout di risposta dal server" : "Errore rete/JSONP";
-          let sub = String(jerr && jerr.message ? jerr.message : jerr);
-          if(jerr && jerr.url){
-            const help = `Verifica che lo script Google Apps sia distribuito come Web app e accessibile pubblicamente ("Chiunque, anche anonimo" o condiviso con l'account corretto). Se trovi una pagina "Accesso negato (403)", apri l'URL nel browser con un account che ha accesso o ridistribuisci lo script come pubblico.`;
-            sub = `URL: ${jerr.url}\n\n${sub}\n\n${help}`;
-          }
-          console.error("loadTax error (jsonp fallback):", jerr);
-          if(sub && /Cartella trimestre non trovata/i.test(sub)){
-            showInlineMessage("Cartella trimestre non trovata", `Controlla Drive per: ${apt} / ${year} / ${quarter}` , "warn");
-          }
-          else if(/JSONP load error|JSONP timeout|Errore rete\/JSONP/i.test(sub) || (jerr && jerr.url)){
-            showInlineMessage(msg, sub, "warn");
-            if(jerr && jerr.url) setInlineMessageUrl(jerr.url);
-          } else {
-            showErrorModal(msg, sub);
-          }
-        });
-    })
-    .finally(()=> showLoader(false));
+    }).catch(err=>{
+      console.error('[ov] fetch error:', err);
+      let msg = 'Errore rete';
+      let sub = String(err && err.message ? err.message : err);
+      if(err && err.status) sub = `HTTP ${err.status}\n\n${err.body||''}`;
+      if(/Cartella trimestre non trovata/i.test(sub)){
+        showInlineMessage('Cartella trimestre non trovata', `Controlla Drive per: ${apt} / ${year} / ${quarter}` , 'warn');
+      } else {
+        showInlineMessage(msg, sub, 'warn');
+        setInlineMessageUrl(url);
+      }
+    }).finally(()=> showLoader(false));
 }
 
 /* ===== BOOTSTRAP ===== */
