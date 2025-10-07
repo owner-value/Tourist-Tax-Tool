@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Logica - Tourist Tax</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div id="tax-app">
+
+      <!-- Selettore -->
+      <div id="tax-selector">
+        <h2>Seleziona Report</h2>
+        <label>Appartamento
+          <select id="apt">
+            <option value="Brignole House">Brignole House</option>
+            <option value="Cartai">Cartai</option>
+            <option value="Cesarea">Cesarea</option>
+            <option value="Lambruschini">Lambruschini</option>
+            <option value="Lercari">Lercari</option>
+            <option value="Oberdan">Oberdan</option>
+            <option value="Romana">Romana</option>
+          </select>
+        </label>
+        <label>Anno
+          <select id="year">
+            <option value="2025">2025</option>
+            <option value="2024">2024</option>
+          </select>
+        </label>
+        <label>Trimestre
+          <select id="quarter">
+            <option value="Q1">Q1 (Gen–Mar)</option>
+            <option value="Q2">Q2 (Apr–Giu)</option>
+            <option value="Q3">Q3 (Lug–Set)</option>
+            <option value="Q4">Q4 (Ott–Dic)</option>
+          </select>
+        </label>
+        <button id="calcBtn">Calcola</button>
+      </div>
+
+      <!-- KPI -->
+      <div id="ov-tax">
+        <div class="ov-cta">
+          <div>
+            <p class="ov-kpi-sub">IMPOSTA TOTALE DA VERSARE</p>
+            <p class="ov-kpi">€<span id="ov-totalTaxDisplay">0.00</span></p>
+          </div>
+          <div>
+            <p class="ov-kpi-sub">Booking: €<span id="ov-bookingTaxDisplay">0.00</span></p>
+            <p class="ov-kpi-sub">Airbnb: €<span id="ov-airbnbTaxDisplay">0.00</span></p>
+          </div>
+        </div>
+
+        <!-- 3 mesi (Booking) -->
+        <section id="ov-Jan-block" class="ov-card">
+          <h2 class="ov-section-h">Gennaio – <span class="booking-color">Booking</span></h2>
+          <p>Tassa Dovuta: €<span id="ov-Jan-tax-total">0.00</span></p>
+        </section>
+        <section id="ov-Feb-block" class="ov-card">
+          <h2 class="ov-section-h">Febbraio – <span class="booking-color">Booking</span></h2>
+          <p>Tassa Dovuta: €<span id="ov-Feb-tax-total">0.00</span></p>
+        </section>
+        <section id="ov-Mar-block" class="ov-card">
+          <h2 class="ov-section-h">Marzo – <span class="booking-color">Booking</span></h2>
+          <p>Tassa Dovuta: €<span id="ov-Mar-tax-total">0.00</span></p>
+        </section>
+
+        <!-- Riepilogo Booking -->
+        <section id="ov-booking-block" class="ov-badge">
+          <h2 class="ov-section-h">Booking – Riepilogo Trimestrale</h2>
+          <p>Tassa Dovuta: €<span id="ov-booking-tax-total">0.00</span></p>
+        </section>
+
+        <!-- Airbnb -->
+        <section id="ov-airbnb-block" class="ov-badge">
+          <h2 class="ov-section-h">Airbnb – <span id="ov-airbnb-scope">Riepilogo Trimestrale Unico</span></h2>
+          <p>Tassa Dovuta: €<span id="ov-airbnb-tax-total">0.00</span></p>
+        </section>
+      </div>
+
+      <!-- Loader -->
+      <div id="ov-loader" class="ov-loader ov-hidden" aria-hidden="true">
+        <div class="ov-spinner" aria-label="Caricamento"></div>
+        <p style="margin-top:12px;font-weight:600;color:#111827">Calcolo in corso…</p>
+      </div>
+
+      <!-- Modal -->
+      <div id="ov-modal" class="ov-modal ov-hidden" role="dialog" aria-modal="true" aria-labelledby="ov-modal-title">
+        <div class="ov-modal-box">
+          <h3 id="ov-modal-title" style="margin:0 0 8px">Ops, qualcosa non va</h3>
+          <p id="ov-modal-msg" class="ov-modal-msg" style="margin:.25rem 0;color:#374151"></p>
+          <p id="ov-modal-sub" class="ov-modal-sub" style="margin:0 0 12px;color:#6b7280;font-size:13px"></p>
+          <div class="ov-modal-actions" style="display:flex;justify-content:flex-end;gap:8px">
+            <button id="ov-modal-close" type="button" class="ov-btn">Ok</button>
+          </div>
+          <button id="ov-modal-x" class="ov-modal-x" aria-label="Chiudi">&times;</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="tourist.js" defer></script>
+  </body>
+</html>
