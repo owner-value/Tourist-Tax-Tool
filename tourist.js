@@ -24,6 +24,17 @@ function showLoader(on){ const ld=$("ov-loader"), btn=$("calcBtn"); if(ld) ld.cl
 function showErrorModal(msg, sub=""){ const m=$("ov-modal"); if(!m){ alert(msg); return; } setText("ov-modal-msg", msg||"Errore sconosciuto."); const s=$("ov-modal-sub"); if(sub){ s.textContent=sub; s.style.display="block"; } else { s.textContent=""; s.style.display="none"; } m.classList.remove("ov-hidden"); }
 function hideErrorModal(){ const m=$("ov-modal"); if(m) m.classList.add("ov-hidden"); }
 
+function recalcBookingQuarterTotal(){
+  const months = ["Jan","Feb","Mar"];
+  const sum = months.reduce((acc,id)=>{
+    const el = document.getElementById(`ov-${id}-tax-total`);
+    return acc + (el ? Number(el.textContent||"0") : 0);
+  }, 0);
+  setText("ov-booking-tax-total", sum.toFixed(2));
+  setText("ov-totalTaxDisplay", (sum + Number(($("ov-airbnb-tax-total")?.textContent||"0"))).toFixed(2));
+}
+
+
 // Inline message (non-modal)
 function showInlineMessage(msg, sub="", type="info"){
   const host=$("tax-app"); if(!host) return;
@@ -106,11 +117,14 @@ function getGuestsTaxable(r){
 
 /* ===== TABLES ===== */
 function buildMainTable(rows){
-  const data = sortByCheckoutAsc(rows);
+  const data = sortByCheckoutAsc(rows).map(r => ({...r, _include: true}));
+
+  // se esistono righe inferite via Booking reference, mostriamo la colonna "Incl."
+  const hasToggle = data.some(r => r.inferredByBookingRef);
+
   const tbl = document.createElement("table");
   tbl.className = "ov-table";
 
-  // Header desktop (su mobile verrà nascosto dal CSS)
   tbl.innerHTML = `<thead><tr>
     <th>Check-in</th>
     <th>Check-out</th>
@@ -119,87 +133,179 @@ function buildMainTable(rows){
     <th>Ospiti tass.</th>
     <th>Pern. tassabili</th>
     <th>Imposta</th>
+    ${hasToggle ? '<th>Incl.</th>' : ''}
   </tr></thead><tbody></tbody><tfoot></tfoot>`;
 
   const tb = tbl.querySelector("tbody");
 
-  data.forEach(r=>{
-    const gt = getGuestsTaxable(r);
+  function rowTax(r){
+    // calcolo imposta solo se inclusa
+    if (!r._include) return 0;
+    return num(r.tax);
+  }
+  function rowTaxableNights(r){
+    return r._include ? num(r.taxableNights) : 0;
+  }
+
+  function renderBody(){
+    tb.innerHTML = "";
+    data.forEach((r, idx)=>{
+      const gt = getGuestsTaxable(r);
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td data-label="Check-in">${itDate(r.checkin)}</td>
+        <td data-label="Check-out">${itDate(r.checkout)}</td>
+        <td data-label="Notti">${num(r.nights)}</td>
+        <td data-label="Ospiti">${num(r.guests)}</td>
+        <td data-label="Ospiti tass.">${num(gt)}</td>
+        <td data-label="Pern. tassabili">${num(r.taxableNights)}</td>
+        <td data-label="Imposta">${euro(r.tax)}</td>
+        ${hasToggle ? `<td data-label="Incl.">
+          ${r.inferredByBookingRef
+            ? `<input type="checkbox" data-idx="${idx}" ${r._include ? 'checked' : ''}/>`
+            : `—`}
+        </td>` : ``}
+      `;
+      tb.appendChild(tr);
+    });
+
+    // attacca i listener per i toggle
+    if (hasToggle) {
+      tb.querySelectorAll('input[type="checkbox"][data-idx]').forEach(chk=>{
+        chk.addEventListener('change', (ev)=>{
+          const i = Number(ev.target.getAttribute('data-idx'));
+          data[i]._include = !!ev.target.checked;
+
+          // aggiorna tfoot e KPI mese + riepilogo booking
+          renderFoot();
+          if (tbl._updateMonthTotals) tbl._updateMonthTotals();
+          recalcBookingQuarterTotal();
+        });
+      });
+    }
+  }
+
+  function totals(){
+    return data.reduce((a,r)=>{
+      const gt = getGuestsTaxable(r);
+      a.n  += num(r.nights);
+      a.g  += num(r.guests);
+      a.gt += num(gt);
+      a.tn += rowTaxableNights(r);
+      a.t  += rowTax(r);
+      return a;
+    }, {n:0,g:0,gt:0,tn:0,t:0});
+  }
+
+  const tf = tbl.querySelector("tfoot");
+  function renderFoot(){
+    const tot = totals();
+    tf.innerHTML = `
+      <tr>
+        <td colspan="2" style="text-align:right;font-weight:700">Totale</td>
+        <td>${tot.n}</td>
+        <td>${tot.g}</td>
+        <td>${tot.gt}</td>
+        <td>${tot.tn}</td>
+        <td>${euro(tot.t)}</td>
+        ${hasToggle ? `<td></td>` : ``}
+      </tr>
+    `;
+  }
+
+  renderBody();
+  renderFoot();
+
+  // permette al chiamante di aggiornare KPI mese quando cambiano i toggle
+  tbl._updateMonthTotals = function(){
+    // cerca il blocco mese a cui appartiene questa tabella
+    // e aggiorna lo span "ov-<ID>-tax-total" con la somma corrente
+    const tot = totals();
+    // trova l'elemento più vicino che contiene l'id del blocco (ov-XXX-block)
+    const host = tbl.closest('[id^="ov-"][id$="-block"]');
+    if (host) {
+      const hid = host.id.replace('-block',''); // es: ov-Jan
+      const span = document.getElementById(`${hid}-tax-total`);
+      if (span) span.textContent = tot.t.toFixed(2);
+    }
+  };
+
+  return tbl;
+}
+
+
+
+function buildExemptTable(rows, type = "minori"){
+  const CAP = 8;
+  const data = sortByCheckoutAsc(rows);
+
+  const filtered = data.filter(r=>{
+    const total = num(r.nights);
+    const v = (type === "minori") ? computeMinorsUnder14(r) : Math.max(0, total - CAP);
+    return v > 0;
+  });
+  if (!filtered.length) return null;
+
+  const tbl = document.createElement("table");
+  tbl.className = "ov-table";
+
+  const labelEsenti = (type === "minori") ? "Minori esenti" : "Notti oltre 8 (esenti)";
+  tbl.innerHTML = `<thead><tr>
+    <th>Check-in</th>
+    <th>Check-out</th>
+    <th>${labelEsenti}</th>
+    <th>Notti esenti</th>
+    <th>Notti totali</th>
+  </tr></thead><tbody></tbody><tfoot></tfoot>`;
+
+  const tb = tbl.querySelector("tbody");
+
+  // Totali
+  let totEsenti = 0;       // prima colonna (minori o notti >8)
+  let totNottiEsenti = 0;  // nuova colonna
+  let totNotti = 0;        // notti totali
+
+  filtered.forEach(r=>{
+    const total = num(r.nights);
+    const minors = computeMinorsUnder14(r);
+    const guestsTaxable = getGuestsTaxable(r);
+    const nightsOver8 = Math.max(0, total - CAP);
+
+    // valori per riga
+    const esenti = (type === "minori") ? minors : nightsOver8;
+    const nottiEsenti = (type === "minori")
+      ? minors * total                         // es.: 3 minori * 5 notti = 15
+      : guestsTaxable * nightsOver8;           // es.: 2 adulti tass. * (notti-8)
+
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td data-label="Check-in">${itDate(r.checkin)}</td>
       <td data-label="Check-out">${itDate(r.checkout)}</td>
-      <td data-label="Notti">${num(r.nights)}</td>
-      <td data-label="Ospiti">${num(r.guests)}</td>
-      <td data-label="Ospiti tass.">${num(gt)}</td>
-      <td data-label="Pern. tassabili">${num(r.taxableNights)}</td>
-      <td data-label="Imposta">${euro(r.tax)}</td>
+      <td data-label="${labelEsenti}">${num(esenti)}</td>
+      <td data-label="Notti esenti">${num(nottiEsenti)}</td>
+      <td data-label="Notti totali">${total}</td>
     `;
     tb.appendChild(tr);
+
+    // accumula totali
+    totEsenti += num(esenti);
+    totNottiEsenti += num(nottiEsenti);
+    totNotti += total;
   });
 
-  const tot = data.reduce((a,r)=>{
-    const gt = getGuestsTaxable(r);
-    return {
-      n:a.n+num(r.nights),
-      g:a.g+num(r.guests),
-      gt:a.gt+num(gt),
-      tn:a.tn+num(r.taxableNights),
-      t:a.t+num(r.tax)
-    };
-  },{n:0,g:0,gt:0,tn:0,t:0});
-
-  // Tfoot desktop + leggibile su mobile (si mostra come card, righe etichettate)
-  const tf = tbl.querySelector("tfoot");
-  tf.innerHTML = `
+  tbl.querySelector("tfoot").innerHTML = `
     <tr>
-      <td data-label="Totale (colspan)">Totale</td>
-      <td data-label="Notti totali">${tot.n}</td>
-      <td data-label="Ospiti totali">${tot.g}</td>
-      <td data-label="Ospiti tass. totali">${tot.gt}</td>
-      <td data-label="Pern. tassabili totali">${tot.tn}</td>
-      <td data-label="Imposta totale">${euro(tot.t)}</td>
+      <td colspan="2" style="text-align:right;font-weight:700">Totale</td>
+      <td>${totEsenti}</td>
+      <td>${totNottiEsenti}</td>
+      <td>${totNotti}</td>
     </tr>
   `;
+
   return tbl;
 }
 
-function buildExemptTable(rows, type="minori"){
-  const CAP=8;
-  const data=sortByCheckoutAsc(rows);
-  const filtered=data.filter(r=>{
-    const total=num(r.nights);
-    let v;
-    if(type==="minori"){
-      v = computeMinorsUnder14(r);
-    } else {
-      v = Math.max(0,total-CAP);
-    }
-    return v>0;
-  });
-  if(!filtered.length) return null;
 
-  const tbl=document.createElement("table"); tbl.className="ov-table";
-  const label=(type==="minori")?"Minori esenti":"Notti oltre 8 (esenti)";
-  tbl.innerHTML=`<thead><tr>
-    <th>Check-in</th><th>Check-out</th><th>Notti totali</th><th>${label}</th>
-  </tr></thead><tbody></tbody><tfoot></tfoot>`;
-  const tb=tbl.querySelector("tbody");
-  filtered.forEach(r=>{
-    const total=num(r.nights);
-    const v = (type==="minori") ? computeMinorsUnder14(r) : Math.max(0,total-CAP);
-    const tr=document.createElement("tr");
-    tr.innerHTML=`<td>${itDate(r.checkin)}</td><td>${itDate(r.checkout)}</td><td>${total}</td><td>${v}</td>`;
-    tb.appendChild(tr);
-  });
-  const tot=filtered.reduce((a,r)=>{
-    const total=num(r.nights);
-    const v = (type==="minori") ? computeMinorsUnder14(r) : Math.max(0,total-CAP);
-    a.n+=total; a.e+=v; return a;
-  },{n:0,e:0});
-  tbl.querySelector("tfoot").innerHTML=`<tr><td colspan="2" style="text-align:right;font-weight:700">Totale</td><td>${tot.n}</td><td>${tot.e}</td></tr>`;
-  return tbl;
-}
 
 function addSection(host, title, tableOrNull){
   const box=document.createElement("section"); box.className="ov-subsection";
@@ -252,29 +358,44 @@ function renderDetailsTables(payload, quarter){
     }
   }
 }
+// Badge "pernottamenti tassabili" nel titolo mese
+function setMonthHeaderWithChip(id, label, nights) {
+  const h = document.querySelector(`#ov-${id}-block h2.ov-section-h`);
+  if (!h) return;
+  h.innerHTML = `${label} – <span class="booking-color">Booking</span>`;
+}
 
 /* ===== RENDER KPI ===== */
-function renderResult(payload, quarter){
-  setText("ov-totalTaxDisplay", Number(payload.totalTax||0).toFixed(2));
-  setText("ov-bookingTaxDisplay", Number(payload.booking?.tax||0).toFixed(2));
-  setText("ov-airbnbTaxDisplay", Number(payload.airbnb?.tax||0).toFixed(2));
+function renderResult(payload, quarter) {
+  setText("ov-totalTaxDisplay", Number(payload.totalTax || 0).toFixed(2));
+  setText("ov-bookingTaxDisplay", Number(payload.booking?.tax || 0).toFixed(2));
+  setText("ov-airbnbTaxDisplay", Number(payload.airbnb?.tax || 0).toFixed(2));
 
-  const labels=QUARTER_TITLES_IT[quarter]||["Gennaio","Febbraio","Marzo"];
-  ["Jan","Feb","Mar"].forEach((id,idx)=>{ const h=document.querySelector(`#ov-${id}-block h2.ov-section-h`); if(h) h.innerHTML=`${labels[idx]} – <span class="booking-color">Booking</span>`; });
+  const fromISO = payload?.period?.from || `${new Date().getFullYear()}-01-01`;
+  const year = new Date(fromISO).getFullYear().toString();
+  const labels = QUARTER_TITLES_IT[quarter] || ["Gennaio", "Febbraio", "Marzo"];
+  const keys = QUARTER_MONTH_KEYS[quarter] || [];
 
-  const fromISO=payload?.period?.from||`${new Date().getFullYear()}-01-01`;
-  const year=new Date(fromISO).getFullYear().toString();
-  const keys=QUARTER_MONTH_KEYS[quarter]||[];
-  ["Jan","Feb","Mar"].forEach((id,idx)=>{
-    const k=keys[idx]?`${year}-${keys[idx]}`:null;
-    const d=k&&payload.bookingByMonth?payload.bookingByMonth[k]:null;
-    const tax=num(d?.tax), guests=num(d?.guests), minors=(typeof d?.minorsUnder14 === 'number')?num(d.minorsUnder14):num(d?.minors),
-          books=num(d?.bookings), nights=num(d?.taxableNights);
+  ["Jan", "Feb", "Mar"].forEach((id, idx) => {
+    const k = keys[idx] ? `${year}-${keys[idx]}` : null;
+    const d = k && payload.bookingByMonth ? payload.bookingByMonth[k] : null;
+
+    const tax    = num(d?.tax);
+    const guests = num(d?.guests);
+    const minors = (typeof d?.minorsUnder14 === "number")
+      ? num(d.minorsUnder14)
+      : num(d?.minors);
+    const books  = num(d?.bookings);
+    const nights = num(d?.taxableNights); // 🔹 totale pern. tassabili del mese
+
     setText(`ov-${id}-tax-total`, tax.toFixed(2));
-    ensureInfoRow(`ov-${id}`,1,`Prenotazioni: ${books}`);
-    ensureInfoRow(`ov-${id}`,2,`Ospiti totali: ${guests}`);
-    ensureInfoRow(`ov-${id}`,3,`Pernottamenti tassabili: ${nights}`);
-    ensureInfoRow(`ov-${id}`,4,`Minori esenti: ${minors}`);
+    ensureInfoRow(`ov-${id}`, 1, `Prenotazioni: ${books}`);
+    ensureInfoRow(`ov-${id}`, 2, `Ospiti totali: ${guests}`);
+    ensureInfoRow(`ov-${id}`, 3, `Pernottamenti tassabili: ${nights}`);
+    ensureInfoRow(`ov-${id}`, 4, `Minori esenti: ${minors}`);
+
+    // 🔹 Aggiorna titolo mese con badge "Pern. tassabili"
+    setMonthHeaderWithChip(id, labels[idx] || "", nights);
   });
 
   setText("ov-airbnb-tax-total", num(payload.airbnb?.tax).toFixed(2));
@@ -282,6 +403,7 @@ function renderResult(payload, quarter){
 
   renderDetailsTables(payload, quarter);
 }
+
 
 /* ===== JSONP helper ===== */
 function jsonp(url, cbName, timeoutMs=20000){

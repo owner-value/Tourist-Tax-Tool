@@ -213,6 +213,19 @@
   text-align: right;
 }
 
+/* Badgetto per valori sintetici nel titolo mese */
+.ov-chip {
+  display: inline-block;
+  margin-left: .5rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: .8rem;
+  font-weight: 700;
+  background: #eef2ff;
+  color: #1f2937;
+  border: 1px solid #c7d2fe;
+}
+
 /* ✅ Mobile adaptive tables */
 @media(max-width:720px){
   .ov-table { display: block; width: 100%; border: 0; }
@@ -278,6 +291,7 @@
     color: #374151;
     font-weight: 600;
   }
+  .ov-chip { display: inline-block; margin-top: 6px; }
 }
 
 /* Stato vuoto */
