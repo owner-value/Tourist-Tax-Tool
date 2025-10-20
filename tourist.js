@@ -1,5 +1,5 @@
 /* ===== CONFIG ===== */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxGysuLPuiEFXhRaPuvABIzOYdz0Zvo4v4V7VvmeUrcS9aCmMsHuxvkPfGBMUZMyTej/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxJiqZB6jM_SwrPTbv3_38EPpwo0DtlAZR32NaEQQOXQBhON49dApY42FDLyONoRYRf/exec";
 
 /* ===== QUARTERS ===== */
 const QUARTER_TITLES_IT = {
