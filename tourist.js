@@ -1,5 +1,18 @@
 /* ===== CONFIG ===== */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzCSoEaW42jIN1jHZQl_HjTNnp9aq8pzck3UksrmkrXKb0hl5uWwjWQ50xm0mX7Ws57/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby0YKXsMX5Ab7boYQLiipyLdMrc7BeQOyoRUW5VeZZmIa4j06GBfN2Qfyf_Y4SHDOKQ_A/exec";
+
+/* ===== APARTMENTS ===== */
+const DEFAULT_APARTMENTS = [
+  "Brignole House",
+  "Cartai",
+  "Cesarea",
+  "Lambruschini",
+  "Lercari",
+  "Oberdan",
+  "Romana",
+  "Recco",
+  "Hilde"
+];
 
 /* ===== QUARTERS ===== */
 const QUARTER_TITLES_IT = {
@@ -13,12 +26,137 @@ const QUARTER_MONTH_KEYS = {
 };
 
 /* ===== HELPERS ===== */
+function normalizeApartments(list){
+  if(!Array.isArray(list)) return [];
+  const seen=new Set();
+  const out=[];
+  list.forEach(name=>{
+    if(typeof name!=="string") return;
+    const n=name.trim();
+    if(!n || seen.has(n)) return;
+    seen.add(n);
+    out.push(n);
+  });
+  return out;
+}
+
+function populateApartmentSelect(names, {preserveSelection=false}={}){
+  const select=$("apt"); if(!select) return;
+  const prev=preserveSelection?select.value:"";
+  const items=normalizeApartments(names);
+  const fallback=normalizeApartments(DEFAULT_APARTMENTS);
+  const source=items.length?items:fallback;
+  select.innerHTML=source.map(name=>`<option value="${name}">${name}</option>`).join("");
+  if(preserveSelection && prev && source.includes(prev)){
+    select.value=prev;
+  } else if(source.length){
+    select.value=source[0];
+  }
+}
+
+async function fetchScriptJson(url, {timeoutMs=10000,retries=0}={}){
+  async function attempt(){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(), timeoutMs);
+    try{
+      const resp=await fetch(url,{signal:controller.signal, cache:'no-store'});
+      if(!resp.ok){
+        const text=await resp.text().catch(()=> "");
+        const err=new Error(`HTTP ${resp.status}`);
+        err.status=resp.status;
+        err.body=text;
+        throw err;
+      }
+      const ct=resp.headers.get('content-type')||'';
+      if(ct.includes('application/json')) return await resp.json();
+      const txt=await resp.text();
+      const match=txt.match(/\{[\s\S]*\}/);
+      if(match) return JSON.parse(match[0]);
+      throw new Error('Unexpected response format');
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  let lastErr;
+  for(let attemptIdx=0; attemptIdx<=retries; attemptIdx++){
+    try{
+      return await attempt();
+    }catch(err){
+      lastErr=err;
+      if(attemptIdx===retries) throw err;
+      await new Promise(res=>setTimeout(res,400*(attemptIdx+1)));
+    }
+  }
+  throw lastErr;
+}
+
+async function hydrateApartmentSelect(){
+  const select=$("apt");
+  if(!select) return;
+  const currentValues=Array.from(select.options||[]).map(opt=>opt.value?.trim()).filter(Boolean);
+  if(!select.dataset.apartmentReady){
+    const fallback=normalizeApartments(DEFAULT_APARTMENTS);
+    const missing=fallback.some(name=>!currentValues.includes(name));
+    if(!currentValues.length || missing){
+      populateApartmentSelect(DEFAULT_APARTMENTS,{preserveSelection:true});
+    }
+  }
+  select.dataset.apartmentReady="1";
+  const discoveryUrls=[
+    `${SCRIPT_URL}?meta=apartments`,
+    `${SCRIPT_URL}?apartments=list`,
+    `${SCRIPT_URL}?apartments=all`,
+    `${SCRIPT_URL}?list=apartments`
+  ];
+  let remoteList=[];
+  let lastError=null;
+  for(const url of discoveryUrls){
+    try{
+      const data=await fetchScriptJson(url,{timeoutMs:15000,retries:0});
+      const candidates=[
+        data?.apartments,
+        data?.aptList,
+        data?.apts,
+        Array.isArray(data)?data:null,
+        data?.data?.apartments,
+        data?.meta?.apartments
+      ];
+      const list=normalizeApartments(candidates.find(arr=>Array.isArray(arr))||[]);
+      if(list.length){
+        remoteList=list;
+        break;
+      }
+    }catch(err){
+      lastError=err;
+    }
+  }
+  if(remoteList.length){
+    populateApartmentSelect(remoteList,{preserveSelection:true});
+    select.dataset.apartmentSource="remote";
+    return;
+  }
+  if(lastError){
+    try{ console.warn("[ov] apartments fetch failed:", lastError); }catch(_){}
+  }
+  if(!select.options.length){
+    populateApartmentSelect(DEFAULT_APARTMENTS);
+  }
+}
+
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
 const euro = (n) => `€${Number(n||0).toFixed(2)}`;
 function itDate(iso){ if(!iso) return ""; const d=new Date(iso.length===10?`${iso}T00:00:00`:iso); return d.toLocaleDateString("it-IT",{day:"2-digit",month:"long",year:"numeric"}); }
 function sortByCheckoutAsc(rows){ return [...rows].sort((a,b)=> new Date(a.checkout) - new Date(b.checkout)); }
 function num(v){ v=Number(v); return isFinite(v)?v:0; }
+
+function isLikelyCorsError(err){
+  if(!err) return false;
+  const msg = String(err && (err.message || err.toString() || "")).toLowerCase();
+  if(msg.includes("cors") || msg.includes("access-control-allow-origin")) return true;
+  if(msg.includes("failed to fetch") || msg.includes("networkerror")) return true;
+  return err instanceof TypeError && !msg.includes("timeout");
+}
 
 function showLoader(on){ const ld=$("ov-loader"), btn=$("calcBtn"); if(ld) ld.classList.toggle("ov-hidden",!on); if(btn){btn.disabled=!!on; btn.style.opacity=on?0.6:1;} }
 function showErrorModal(msg, sub=""){ const m=$("ov-modal"); if(!m){ alert(msg); return; } setText("ov-modal-msg", msg||"Errore sconosciuto."); const s=$("ov-modal-sub"); if(sub){ s.textContent=sub; s.style.display="block"; } else { s.textContent=""; s.style.display="none"; } m.classList.remove("ov-hidden"); }
@@ -601,11 +739,37 @@ function loadTax(apt, year, quarter){
 
   try{ console.info("[ov] Request URL:", url); }catch(_){}
 
-    // Use fetch with a single retry. The Apps Script endpoint returns Access-Control-Allow-Origin: *
-    // so a CORS fetch is the preferred, reliable path. JSONP fallback removed to avoid script tag issues.
-    const doFetch = (attempt=1) => {
-      const controller = new AbortController();
-      const timeoutMs = 15000;
+  const handleResponse = (res) => {
+    if(!res || !res.ok){
+      const msg=res && res.error ? res.error : "Impossibile calcolare.";
+      let hint="";
+      if(/Cartella trimestre non trovata/i.test(msg)) hint=`Controlla in Drive: Appartamenti ➜ ${apt} ➜ ${year} ➜ ${quarter} (cartella mancante).`;
+      else if(/Nessun file nel trimestre/i.test(msg)) hint="La cartella esiste ma non contiene alcun file report.";
+      else if(/Cartella appartamento non trovata/i.test(msg)) hint="Il nome dell'appartamento deve corrispondere alla cartella in Drive.";
+      else if(/Parametri richiesti/i.test(msg)) hint="Verifica apt, year e quarter (Q1..Q4).";
+      showErrorModal(msg, hint);
+      return false;
+    }
+    const aptCandidates=[
+      res.apartments,
+      res.apartmentsList,
+      res.aptList,
+      res.meta?.apartments,
+      res.data?.apartments
+    ];
+    const remoteApts=normalizeApartments(aptCandidates.find(arr=>Array.isArray(arr))||[]);
+    if(remoteApts.length){
+      populateApartmentSelect(remoteApts,{preserveSelection:true});
+      const select=$("apt"); if(select) select.dataset.apartmentSource="remote";
+    }
+    renderResult(res, quarter);
+    return true;
+  };
+
+  // Use fetch with a single retry. If the endpoint blocks CORS we fall back to the JSONP helper.
+  const doFetch = (attempt=1) => {
+    const controller = new AbortController();
+    const timeoutMs = 15000;
       const tmr = setTimeout(()=> controller.abort(), timeoutMs);
       return fetch(url, { signal: controller.signal, cache: 'no-store' })
         .then(async resp => {
@@ -634,20 +798,16 @@ function loadTax(apt, year, quarter){
         });
     };
 
-    doFetch().then(res=>{
-      if(!res || !res.ok){
-        const msg=res && res.error ? res.error : "Impossibile calcolare.";
-        let hint="";
-        if(/Cartella trimestre non trovata/i.test(msg)) hint=`Controlla in Drive: Appartamenti ➜ ${apt} ➜ ${year} ➜ ${quarter} (cartella mancante).`;
-        else if(/Nessun file nel trimestre/i.test(msg)) hint="La cartella esiste ma non contiene alcun file report.";
-        else if(/Cartella appartamento non trovata/i.test(msg)) hint="Il nome dell'appartamento deve corrispondere alla cartella in Drive.";
-        else if(/Parametri richiesti/i.test(msg)) hint="Verifica apt, year e quarter (Q1..Q4).";
-        showErrorModal(msg, hint);
-        return;
-      }
-      renderResult(res, quarter);
-    }).catch(err=>{
+    doFetch().then(handleResponse).catch(async err=>{
       console.error('[ov] fetch error:', err);
+      if(isLikelyCorsError(err)){
+        try{
+          const res = await jsonp(url, null, 20000);
+          if(handleResponse(res)) return;
+        }catch(jsonpErr){
+          try{ console.error('[ov] jsonp fallback failed:', jsonpErr); }catch(_){}
+        }
+      }
       let msg = 'Errore rete';
       let sub = String(err && err.message ? err.message : err);
       if(err && err.status) sub = `HTTP ${err.status}\n\n${err.body||''}`;
@@ -664,6 +824,7 @@ function loadTax(apt, year, quarter){
 document.addEventListener("DOMContentLoaded", ()=>{
   const ld=$("ov-loader"); if(ld && !ld.classList.contains("ov-hidden")) ld.classList.add("ov-hidden");
   ["ov-modal-close","ov-modal-x"].forEach(id=>{ const el=$(id); if(el) el.addEventListener("click", hideErrorModal); });
+  hydrateApartmentSelect();
   const btn=$("calcBtn");
   if(btn){
     btn.addEventListener("click", ()=>{
