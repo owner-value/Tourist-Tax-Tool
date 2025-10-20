@@ -1,5 +1,5 @@
 /* ===== CONFIG ===== */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby0YKXsMX5Ab7boYQLiipyLdMrc7BeQOyoRUW5VeZZmIa4j06GBfN2Qfyf_Y4SHDOKQ_A/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzWeTGNB4JteKk0IxpQn_uQbZ-XLY4L5OSBDjwLvSxhOPObz9xoKzYbHb3QcQ_ekGW6qA/exec";
 
 /* ===== APARTMENTS ===== */
 const DEFAULT_APARTMENTS = [
