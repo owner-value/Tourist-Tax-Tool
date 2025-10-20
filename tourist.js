@@ -1,5 +1,5 @@
 /* ===== CONFIG ===== */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxh7vJu1zdZqOGU82HUqcdhbaackkmIcgefoVtB0QDb-jaz0hNtDvM5O5ZKBTbVY5947A/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbykMUixM_OuKNs8KBQCTPKrlBtupCnVS1zRCgs4foUN98Nt2l90Dl_v5u_9kS5NiIWk/exec";
 
 /* ===== APARTMENTS ===== */
 const DEFAULT_APARTMENTS = [
@@ -457,7 +457,15 @@ function renderDetailsTables(payload, quarter){
   const fromISO = payload?.period?.from || `${new Date().getFullYear()}-01-01`;
   const year    = new Date(fromISO).getFullYear().toString();
   const keys    = QUARTER_MONTH_KEYS[quarter] || [];
-  const details = payload.details || [];
+  const detailsRaw = payload?.details;
+  const details = Array.isArray(detailsRaw)
+    ? detailsRaw
+    : (detailsRaw && typeof detailsRaw === "object"
+        ? Object.values(detailsRaw).reduce((acc, value)=>{
+            if(Array.isArray(value)) acc.push(...value);
+            return acc;
+          }, [])
+        : []);
 
   // --- Map mesi IT (anche abbreviazioni) -> 1..12
   const MONTH_IT = {
