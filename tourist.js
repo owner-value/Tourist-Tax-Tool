@@ -83,6 +83,14 @@ async function fetchScriptJson(url, {timeoutMs=10000,retries=0}={}){
       return await attempt();
     }catch(err){
       lastErr=err;
+      if(isLikelyCorsError(err)){
+        try{
+          return await jsonp(url, null, timeoutMs*2);
+        }catch(jsonpErr){
+          lastErr=jsonpErr;
+          break;
+        }
+      }
       if(attemptIdx===retries) throw err;
       await new Promise(res=>setTimeout(res,400*(attemptIdx+1)));
     }
